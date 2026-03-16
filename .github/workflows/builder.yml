@@ -15,14 +15,14 @@ jobs:
 
       - name: Download Android keystore
         id: android_keystore
-        if: secrets.KEYSTORE_BASE64 != '' && secrets.KEY_PASSWORD != '' && secrets.KEY_ALIAS != ''
+        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.KEY_PASSWORD != '' && secrets.KEY_ALIAS != '' }}
         uses: timheuer/base64-to-file@v1.2.4
         with:
           fileName: firkaapp.jks
           encodedString: ${{ secrets.KEYSTORE_BASE64 }}
 
       - name: Create key.properties
-        if: secrets.KEYSTORE_BASE64 != '' && secrets.KEY_PASSWORD != '' && secrets.KEY_ALIAS != ''
+        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.KEY_PASSWORD != '' && secrets.KEY_ALIAS != '' }}
         run: |
           echo "storeFile=${{ steps.android_keystore.outputs.filePath }}" > refilc/android/key.properties
           echo "storePassword=${{ secrets.KEY_PASSWORD }}" >> refilc/android/key.properties
@@ -31,7 +31,7 @@ jobs:
           cp refilc/android/key.properties refilc/android/debugkey.properties
 
       - name: Keystore not configured (debug-signed release)
-        if: secrets.KEYSTORE_BASE64 == '' || secrets.KEY_PASSWORD == '' || secrets.KEY_ALIAS == ''
+        if: ${{ secrets.KEYSTORE_BASE64 == '' || secrets.KEY_PASSWORD == '' || secrets.KEY_ALIAS == '' }}
         run: echo "Android signing secrets are missing, continuing with debug signing fallback."
 
       - uses: actions/setup-java@v4.7.0
