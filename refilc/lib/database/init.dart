@@ -88,6 +88,7 @@ const userDataDB = DatabaseStruct("user_data", {
   "last_seen_absence": int,
   "last_seen_message": int,
   "last_seen_lesson": int,
+  "last_seen_exam": int,
   // goal planning // non kreta data
   "goal_plans": String,
   "goal_averages": String,
@@ -166,6 +167,7 @@ Future<Database> initDB(DatabaseProvider database) async {
       "last_seen_absence": DateTime.now().millisecondsSinceEpoch,
       "last_seen_message": DateTime.now().millisecondsSinceEpoch,
       "last_seen_lesson": DateTime.now().millisecondsSinceEpoch,
+      "last_seen_exam": DateTime.now().millisecondsSinceEpoch,
       // goal planning // non kreta data
       "goal_plans": "{}",
       "goal_averages": "{}",

@@ -305,13 +305,17 @@ class _GradeSubjectViewState extends State<GradeSubjectView>
     if (DateTime.now().day > 5) {
       _timetableController.next(context);
     }
+
+    fetchGoalPlans();
   }
 
   void fetchGoalPlans() async {
-    plan = (await dbProvider.userQuery
+    final nextPlan = (await dbProvider.userQuery
             .subjectGoalPlans(userId: user.id!))[widget.subject.id] ??
         '';
-    setState(() {});
+
+    if (!mounted || plan == nextPlan) return;
+    setState(() => plan = nextPlan);
   }
 
   @override
@@ -370,8 +374,6 @@ class _GradeSubjectViewState extends State<GradeSubjectView>
       buildTiles(ghostGrades);
     }
 
-    fetchGoalPlans();
-
     return Scaffold(
         key: _scaffoldKey,
         floatingActionButtonLocation: ExpandableFab.location,
@@ -385,6 +387,7 @@ class _GradeSubjectViewState extends State<GradeSubjectView>
               size: 20.0,
               builder: (context, onPressed, progress) =>
                   FloatingActionButton.small(
+                heroTag: 'subject_view_fab_open_${widget.subject.id}',
                 onPressed: onPressed,
                 backgroundColor: Theme.of(context).colorScheme.tertiary,
                 child: const Icon(Icons.more_horiz_outlined),
@@ -394,6 +397,7 @@ class _GradeSubjectViewState extends State<GradeSubjectView>
               size: 20.0,
               builder: (context, onPressed, progress) =>
                   FloatingActionButton.small(
+                heroTag: 'subject_view_fab_close_${widget.subject.id}',
                 onPressed: onPressed,
                 backgroundColor: Theme.of(context).colorScheme.tertiary,
                 child: const Icon(Icons.close),

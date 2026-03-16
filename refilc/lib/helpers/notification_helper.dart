@@ -1,719 +1,627 @@
-// import 'package:flutter/foundation.dart';
-// import 'package:refilc/api/providers/database_provider.dart';
-// import 'package:refilc/api/providers/status_provider.dart';
-// import 'package:refilc/api/providers/user_provider.dart';
-// import 'package:refilc/models/settings.dart';
-// import 'package:refilc/helpers/notification_helper.i18n.dart';
-// import 'package:refilc/models/user.dart';
-// import 'package:refilc/utils/navigation_service.dart';
-// import 'package:refilc/utils/service_locator.dart';
-// import 'package:refilc_kreta_api/client/api.dart';
-// import 'package:refilc_kreta_api/client/client.dart';
-// import 'package:refilc_kreta_api/models/absence.dart';
-// import 'package:refilc_kreta_api/models/grade.dart';
-// import 'package:refilc_kreta_api/models/lesson.dart';
-// import 'package:refilc_kreta_api/models/week.dart';
-// import 'package:refilc_kreta_api/providers/grade_provider.dart';
-// import 'package:refilc_kreta_api/providers/timetable_provider.dart';
-// import 'package:flutter_local_notifications/flutter_local_notifications.dart'
-//     hide Message;
-// import 'package:i18n_extension/i18n_extension.dart';
-// import 'package:intl/intl.dart';
-// import 'package:refilc_kreta_api/models/message.dart';
+import 'dart:io';
 
-// if you want to add a new category, also add it to the DB or else the app will probably crash
+import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'
+    hide Message;
+import 'package:intl/intl.dart';
+import 'package:refilc/api/providers/database_provider.dart';
+import 'package:refilc/api/providers/status_provider.dart';
+import 'package:refilc/api/providers/user_provider.dart';
+import 'package:refilc/models/settings.dart';
+import 'package:refilc/utils/navigation_service.dart';
+import 'package:refilc/utils/service_locator.dart';
+import 'package:refilc_kreta_api/client/api.dart';
+import 'package:refilc_kreta_api/client/client.dart';
+import 'package:refilc_kreta_api/models/absence.dart';
+import 'package:refilc_kreta_api/models/exam.dart';
+import 'package:refilc_kreta_api/models/grade.dart';
+import 'package:refilc_kreta_api/models/lesson.dart';
+import 'package:refilc_kreta_api/models/message.dart';
+import 'package:refilc_kreta_api/models/week.dart';
+import 'package:refilc_kreta_api/providers/timetable_provider.dart';
+
 enum LastSeenCategory {
   grade,
   surprisegrade,
   absence,
   message,
-  lesson
-} // didn't know a better place for this
+  lesson,
+  exam,
+}
 
-// class NotificationsHelper {
-//   late DatabaseProvider database;
-//   late SettingsProvider settingsProvider;
-//   late UserProvider userProvider;
-//   late KretaClient kretaClient;
-//   FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-//       FlutterLocalNotificationsPlugin();
+class NotificationsHelper {
+  NotificationsHelper._();
+  static final NotificationsHelper _instance = NotificationsHelper._();
+  factory NotificationsHelper() => _instance;
 
-//   String dayTitle(DateTime date) {
-//     try {
-//       String dayTitle =
-//           DateFormat("EEEE", I18n.locale.languageCode).format(date);
-//       dayTitle = dayTitle[0].toUpperCase() +
-//           dayTitle.substring(1); // capitalize string
-//       return dayTitle;
-//     } catch (e) {
-//       return "Unknown";
-//     }
-//   }
+  final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
+  bool _initialized = false;
 
-//   @pragma('vm:entry-point')
-//   void backgroundJob() async {
-//     // initialize providers
-//     database = DatabaseProvider();
-//     await database.init();
-//     settingsProvider = await database.query.getSettings(database);
-//     userProvider = await database.query.getUsers(settingsProvider);
+  Future<void> initialize() async {
+    if (_initialized || kIsWeb) return;
 
-//     if (userProvider.id != null && settingsProvider.notificationsEnabled) {
-//       List<User> users = userProvider.getUsers();
+    const darwin = DarwinInitializationSettings(
+      requestSoundPermission: true,
+      requestBadgePermission: true,
+      requestAlertPermission: true,
+    );
+    const android = AndroidInitializationSettings('ic_notification');
+    const linux = LinuxInitializationSettings(defaultActionName: 'Open');
+    const init = InitializationSettings(
+      android: android,
+      iOS: darwin,
+      macOS: darwin,
+      linux: linux,
+    );
 
-//       // Process notifications for each user asynchronously
-//       await Future.forEach(users, (User user) async {
-//         // Create a new instance of userProvider for each user
-//         UserProvider userProviderForUser =
-//             await database.query.getUsers(settingsProvider);
-//         userProviderForUser.setUser(user.id);
+    await _plugin.initialize(
+      init,
+      onDidReceiveNotificationResponse: onDidReceiveNotificationResponse,
+      onDidReceiveBackgroundNotificationResponse:
+          onDidReceiveBackgroundNotificationResponse,
+    );
 
-//         // Refresh kreta login for current user
-//         final status = StatusProvider();
-//         KretaClient kretaClientForUser = KretaClient(
-//           user: userProviderForUser,
-//           settings: settingsProvider,
-//           database: database,
-//           status: status,
-//         );
-//         await kretaClientForUser.refreshLogin();
+    if (Platform.isAndroid) {
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(
+            const AndroidNotificationChannel(
+              'GENERAL',
+              'General',
+              description: 'General notifications',
+              importance: Importance.max,
+            ),
+          );
+    }
 
-//         // Process notifications for current user
-//         if (settingsProvider.notificationsGradesEnabled) {
-//           await gradeNotification(userProviderForUser, kretaClientForUser);
-//         }
-//         if (settingsProvider.notificationsAbsencesEnabled) {
-//           await absenceNotification(userProviderForUser, kretaClientForUser);
-//         }
-//         if (settingsProvider.notificationsMessagesEnabled) {
-//           await messageNotification(userProviderForUser, kretaClientForUser);
-//         }
-//         if (settingsProvider.notificationsLessonsEnabled) {
-//           await lessonNotification(userProviderForUser, kretaClientForUser);
-//         }
-//       });
-//     }
-//   }
+    _initialized = true;
+  }
 
-// /*
+  Future<void> requestPermissions() async {
+    if (kIsWeb) return;
+    await initialize();
 
-// ezt a kódot nagyon szépen megírta az AI, picit szerkesztgettem is rajta //pearoo what did you do - zypherift
-// nem lesz tőle használhatatlan az app, de kikommenteltem, mert még a végén kima bántani fog
+    if (Platform.isAndroid) {
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+      return;
+    }
 
-//    Future<void> liveNotification(UserProvider currentuserProvider, KretaClient currentKretaClient) async {
-//     // create a permanent live notification that has a progress bar on how much is left from the current lesson, the title is the name of the class
-//     // get current lesson
-//     TimetableProvider timetableProvider = TimetableProvider(
-//         user: currentuserProvider,
-//         database: database,
-//         kreta: currentKretaClient);
-//     await timetableProvider.restoreUser();
-//     await timetableProvider.fetch(week: Week.current());
-//     List<Lesson> apilessons = timetableProvider.getWeek(Week.current()) ?? [];
-//     Lesson? currentLesson;
-//     for (Lesson lesson in apilessons) {
-//       if (lesson.date.isBefore(DateTime.now()) &&
-//           lesson.end.isAfter(DateTime.now())) {
-//         currentLesson = lesson;
-//         break;
-//       }
-//     }
-//     if (currentLesson == null) {
-//       return;
-//     }
-//         final elapsedTime = DateTime.now()
-//                 .difference(currentLesson.start)
-//                 .inSeconds
-//                 .toDouble();
-//         final maxTime = currentLesson.end
-//             .difference(currentLesson.start)
-//             .inSeconds
-//             .toDouble();
+    if (Platform.isIOS) {
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+              IOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
+      return;
+    }
 
-//         final showMinutes = maxTime - elapsedTime > 60;
-//     // create a live notification
-//     AndroidNotificationDetails androidNotificationDetails =
-//         AndroidNotificationDetails(
-//       'LIVE',
-//       'Élő óra',
-//       channelDescription: 'Értesítés az aktuális óráról',
-//       importance: Importance.max,
-//       priority: Priority.max,
-//       color: settingsProvider.customAccentColor,
-//       ticker: 'Élő óra',
-//       maxProgress: maxTime.toInt(),
-//       progress: elapsedTime.toInt(),
-//     );
-//     NotificationDetails notificationDetails =
-//         NotificationDetails(android: androidNotificationDetails);
-//     await flutterLocalNotificationsPlugin.show(
-//       currentLesson.id.hashCode,
-//       currentLesson.name,
-//       "body_live".i18n.fill(
-//         [
-//           currentLesson.lessonIndex,
-//           currentLesson.name,
-//           dayTitle(currentLesson.date),
-//           DateFormat("HH:mm").format(currentLesson.start),
-//           DateFormat("HH:mm").format(currentLesson.end),
-//         ],
-//       ),
-//       notificationDetails,
-//       payload: "timetable",
-//     );
+    if (Platform.isMacOS) {
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+              MacOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
+    }
+  }
 
-//   }
-//  */
-//   Future<void> gradeNotification(
-//       UserProvider currentuserProvider, KretaClient currentKretaClient) async {
-//     // fetch grades
-//     GradeProvider gradeProvider = GradeProvider(
-//         settings: settingsProvider,
-//         user: currentuserProvider,
-//         database: database,
-//         kreta: currentKretaClient);
-//     await gradeProvider.fetch();
-//     database.userQuery
-//         .getGrades(userId: currentuserProvider.id!)
-//         .then((grades) async {
-//       DateTime lastSeenGrade = await database.userQuery.lastSeen(
-//           userId: currentuserProvider.id!, category: LastSeenCategory.grade);
+  @pragma('vm:entry-point')
+  static void onDidReceiveBackgroundNotificationResponse(
+      NotificationResponse notificationResponse) {
+    NotificationsHelper()
+        .onDidReceiveNotificationResponse(notificationResponse);
+  }
 
-//       // loop through grades and see which hasn't been seen yet
-//       for (Grade grade in grades) {
-//         // if grade is not a normal grade (1-5), don't show it
-//         if ([1, 2, 3, 4, 5].contains(grade.value.value)) {
-//           // if the grade was added over a week ago, don't show it to avoid notification spam
-//           if (grade.date.isAfter(lastSeenGrade) &&
-//               DateTime.now().difference(grade.date).inDays < 7) {
-//             // send notificiation about new grade
-//             AndroidNotificationDetails androidNotificationDetails =
-//                 AndroidNotificationDetails(
-//               'GRADES',
-//               'Jegyek',
-//               channelDescription: 'Értesítés jegyek beírásakor',
-//               importance: Importance.max,
-//               priority: Priority.max,
-//               color: settingsProvider.customAccentColor,
-//               ticker: 'Jegyek',
-//             );
-//             NotificationDetails notificationDetails =
-//                 NotificationDetails(android: androidNotificationDetails);
-//             if (currentuserProvider.getUsers().length == 1) {
-//               await flutterLocalNotificationsPlugin.show(
-//                   grade.id.hashCode,
-//                   "title_grade".i18n,
-//                   "body_grade".i18n.fill(
-//                     [
-//                       grade.subject.isRenamed &&
-//                               settingsProvider.renamedSubjectsEnabled
-//                           ? grade.subject.renamedTo!
-//                           : grade.subject.name,
-//                       grade.value.value.toString()
-//                     ],
-//                   ),
-//                   notificationDetails,
-//                   payload: "grades");
-//             } else if (settingsProvider.gradeOpeningFun) {
-//               // if surprise grades are enabled, show a notification without the grade
-//               await flutterLocalNotificationsPlugin.show(
-//                   grade.id.hashCode,
-//                   "title_grade".i18n,
-//                   "body_grade_surprise".i18n.fill(
-//                     [
-//                       grade.subject.isRenamed &&
-//                               settingsProvider.renamedSubjectsEnabled
-//                           ? grade.subject.renamedTo!
-//                           : grade.subject.name,
-//                       grade.value.value.toString()
-//                     ],
-//                   ),
-//                   notificationDetails,
-//                   payload: "grades");
-//             } else {
-//               // multiple users are added, also display student name
-//               await flutterLocalNotificationsPlugin.show(
-//                   grade.id.hashCode,
-//                   "title_grade".i18n,
-//                   "body_grade_multiuser".i18n.fill(
-//                     [
-//                       currentuserProvider.displayName!,
-//                       grade.subject.isRenamed &&
-//                               settingsProvider.renamedSubjectsEnabled
-//                           ? grade.subject.renamedTo!
-//                           : grade.subject.name,
-//                       grade.value.value.toString()
-//                     ],
-//                   ),
-//                   notificationDetails,
-//                   payload: "grades");
-//             }
-//           }
-//         }
-//       }
-//       // set grade seen status
-//       database.userStore.storeLastSeen(DateTime.now(),
-//           userId: currentuserProvider.id!, category: LastSeenCategory.grade);
-//     });
-//   }
+  @pragma('vm:entry-point')
+  Future<void> backgroundJob() async {
+    await initialize();
 
-//   Future<void> absenceNotification(
-//       UserProvider currentuserProvider, KretaClient currentKretaClient) async {
-//     // get absences from api
-//     List? absenceJson = await currentKretaClient
-//         .getAPI(KretaAPI.absences(currentuserProvider.instituteCode ?? ""));
-//     if (absenceJson == null) {
-//       return;
-//     }
-//     DateTime lastSeenAbsence = await database.userQuery.lastSeen(
-//         userId: currentuserProvider.id!, category: LastSeenCategory.absence);
-//     // format api absences
-//     List<Absence> absences =
-//         absenceJson.map((e) => Absence.fromJson(e)).toList();
-//     for (Absence absence in absences) {
-//       if (absence.date.isAfter(lastSeenAbsence)) {
-//         AndroidNotificationDetails androidNotificationDetails =
-//             AndroidNotificationDetails(
-//           'ABSENCES',
-//           'Hiányzások',
-//           channelDescription: 'Értesítés hiányzások beírásakor',
-//           importance: Importance.max,
-//           priority: Priority.max,
-//           color: settingsProvider.customAccentColor,
-//           ticker: 'Hiányzások',
-//         );
-//         NotificationDetails notificationDetails =
-//             NotificationDetails(android: androidNotificationDetails);
-//         if (currentuserProvider.getUsers().length == 1) {
-//           await flutterLocalNotificationsPlugin.show(
-//               absence.id.hashCode,
-//               "title_absence"
-//                   .i18n, // https://discord.com/channels/1111649116020285532/1153273625206591528
-//               "body_absence".i18n.fill(
-//                 [
-//                   DateFormat("yyyy-MM-dd").format(absence.date),
-//                   absence.subject.isRenamed &&
-//                           settingsProvider.renamedSubjectsEnabled
-//                       ? absence.subject.renamedTo!
-//                       : absence.subject.name
-//                 ],
-//               ),
-//               notificationDetails,
-//               payload: "absences");
-//         } else {
-//           await flutterLocalNotificationsPlugin.show(
-//               absence.id.hashCode,
-//               "title_absence"
-//                   .i18n, // https://discord.com/channels/1111649116020285532/1153273625206591528
-//               "body_absence_multiuser".i18n.fill(
-//                 [
-//                   currentuserProvider.displayName!,
-//                   DateFormat("yyyy-MM-dd").format(absence.date),
-//                   absence.subject.isRenamed &&
-//                           settingsProvider.renamedSubjectsEnabled
-//                       ? absence.subject.renamedTo!
-//                       : absence.subject.name
-//                 ],
-//               ),
-//               notificationDetails,
-//               payload: "absences");
-//         }
-//       }
-//     }
-//     await database.userStore.storeLastSeen(DateTime.now(),
-//         userId: currentuserProvider.id!, category: LastSeenCategory.absence);
-//   }
+    final database = DatabaseProvider();
+    await database.init();
 
-//   Future<void> messageNotification(
-//       UserProvider currentuserProvider, KretaClient currentKretaClient) async {
-//     // get messages from api
-//     List? messageJson =
-//         await currentKretaClient.getAPI(KretaAPI.messages("beerkezett"));
-//     if (messageJson == null) {
-//       return;
-//     }
-//     // format api messages to correct format
-//     // Parse messages
-//     List<Message> messages = [];
-//     await Future.wait(List.generate(messageJson.length, (index) {
-//       return () async {
-//         Map message = messageJson.cast<Map>()[index];
-//         Map? innerMessageJson = await currentKretaClient
-//             .getAPI(KretaAPI.message(message["azonosito"].toString()));
-//         await Future.delayed(const Duration(seconds: 1));
-//         if (innerMessageJson != null) {
-//           messages.add(
-//               Message.fromJson(innerMessageJson, forceType: MessageType.inbox));
-//         }
-//       }();
-//     }));
+    final settings = await database.query.getSettings(database);
+    final users = await database.query.getUsers(settings);
 
-//     DateTime lastSeenMessage = await database.userQuery.lastSeen(
-//         userId: currentuserProvider.id!, category: LastSeenCategory.message);
+    if (!settings.notificationsEnabled || users.id == null) return;
 
-//     for (Message message in messages) {
-//       if (message.date.isAfter(lastSeenMessage)) {
-//         AndroidNotificationDetails androidNotificationDetails =
-//             AndroidNotificationDetails(
-//           'MESSAGES',
-//           'Üzenetek',
-//           channelDescription: 'Értesítés kapott üzenetekkor',
-//           importance: Importance.max,
-//           priority: Priority.max,
-//           color: settingsProvider.customAccentColor,
-//           ticker: 'Üzenetek',
-//         );
-//         NotificationDetails notificationDetails =
-//             NotificationDetails(android: androidNotificationDetails);
-//         if (currentuserProvider.getUsers().length == 1) {
-//           await flutterLocalNotificationsPlugin.show(
-//             message.id.hashCode,
-//             message.author,
-//             message.content.replaceAll(RegExp(r'<[^>]*>'), ''),
-//             notificationDetails,
-//             payload: "messages",
-//           );
-//         } else {
-//           await flutterLocalNotificationsPlugin.show(
-//             message.id.hashCode,
-//             "(${currentuserProvider.displayName!}) ${message.author}",
-//             message.content.replaceAll(RegExp(r'<[^>]*>'), ''),
-//             notificationDetails,
-//             payload: "messages",
-//           );
-//         }
-//       }
-//     }
-//     await database.userStore.storeLastSeen(DateTime.now(),
-//         userId: currentuserProvider.id!, category: LastSeenCategory.message);
-//   }
+    for (final user in users.getUsers()) {
+      final userProviderForUser = await database.query.getUsers(settings);
+      userProviderForUser.setUser(user.id);
 
-//   Future<void> lessonNotification(
-//       UserProvider currentuserProvider, KretaClient currentKretaClient) async {
-//     // get lessons from api
-//     TimetableProvider timetableProvider = TimetableProvider(
-//         user: currentuserProvider,
-//         database: database,
-//         kreta: currentKretaClient);
-//     await timetableProvider.restoreUser();
-//     await timetableProvider.fetch(week: Week.current());
-//     List<Lesson> apilessons = timetableProvider.getWeek(Week.current()) ?? [];
+      final status = StatusProvider();
+      final kreta = KretaClient(
+        user: userProviderForUser,
+        settings: settings,
+        database: database,
+        status: status,
+      );
 
-//     DateTime lastSeenLesson = await database.userQuery.lastSeen(
-//         userId: currentuserProvider.id!, category: LastSeenCategory.lesson);
-//     Lesson? latestLesson;
+      final loginResult = await kreta.refreshLogin();
+      if (loginResult != null && loginResult != 'success') {
+        continue;
+      }
 
-//     for (Lesson lesson in apilessons) {
-//       if ((lesson.status?.name != "Elmaradt" ||
-//               lesson.substituteTeacher?.name != "") &&
-//           lesson.date.isAfter(latestLesson?.start ?? DateTime(1970))) {
-//         latestLesson = lesson;
-//       }
-//       if (lesson.date.isAfter(lastSeenLesson)) {
-//         AndroidNotificationDetails androidNotificationDetails =
-//             AndroidNotificationDetails(
-//           'LESSONS',
-//           'Órák',
-//           channelDescription: 'Értesítés órák elmaradásáról, helyettesítésről',
-//           importance: Importance.max,
-//           priority: Priority.max,
-//           color: settingsProvider.customAccentColor,
-//           ticker: 'Órák',
-//         );
-//         NotificationDetails notificationDetails =
-//             NotificationDetails(android: androidNotificationDetails);
-//         if (currentuserProvider.getUsers().length == 1) {
-//           if (lesson.status?.name == "Elmaradt") {
-//             switch (I18n.localeStr) {
-//               case "en_en":
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                       lesson.id.hashCode,
-//                       "title_lesson".i18n,
-//                       "body_lesson_canceled".i18n.fill(
-//                         [
-//                           lesson.lessonIndex,
-//                           lesson.name,
-//                           dayTitle(lesson.date)
-//                         ],
-//                       ),
-//                       notificationDetails,
-//                       payload: "timetable");
-//                   break;
-//                 }
-//               case "hu_hu":
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                       lesson.id.hashCode,
-//                       "title_lesson".i18n,
-//                       "body_lesson_canceled".i18n.fill(
-//                         [
-//                           dayTitle(lesson.date),
-//                           lesson.lessonIndex,
-//                           lesson.name
-//                         ],
-//                       ),
-//                       notificationDetails,
-//                       payload: "timetable");
-//                   break;
-//                 }
-//               default:
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                       lesson.id.hashCode,
-//                       "title_lesson".i18n,
-//                       "body_lesson_canceled".i18n.fill(
-//                         [
-//                           lesson.lessonIndex,
-//                           lesson.name,
-//                           dayTitle(lesson.date)
-//                         ],
-//                       ),
-//                       notificationDetails,
-//                       payload: "timetable");
-//                   break;
-//                 }
-//             }
-//           } else if (lesson.substituteTeacher?.name != "" &&
-//               lesson.substituteTeacher != null) {
-//             switch (I18n.localeStr) {
-//               case "en_en":
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                     lesson.id.hashCode,
-//                     "title_lesson".i18n,
-//                     "body_lesson_substituted".i18n.fill(
-//                       [
-//                         lesson.lessonIndex,
-//                         lesson.name,
-//                         dayTitle(lesson.date),
-//                         ((lesson.substituteTeacher?.isRenamed ?? false)
-//                                 ? lesson.substituteTeacher?.renamedTo!
-//                                 : lesson.substituteTeacher?.name) ??
-//                             '',
-//                       ],
-//                     ),
-//                     notificationDetails,
-//                     payload: "timetable",
-//                   );
-//                   break;
-//                 }
-//               case "hu_hu":
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                     lesson.id.hashCode,
-//                     "title_lesson".i18n,
-//                     "body_lesson_substituted".i18n.fill(
-//                       [
-//                         dayTitle(lesson.date),
-//                         lesson.lessonIndex,
-//                         lesson.name,
-//                         ((lesson.substituteTeacher?.isRenamed ?? false)
-//                                 ? lesson.substituteTeacher?.renamedTo!
-//                                 : lesson.substituteTeacher?.name) ??
-//                             '',
-//                       ],
-//                     ),
-//                     notificationDetails,
-//                     payload: "timetable",
-//                   );
-//                   break;
-//                 }
-//               default:
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                     lesson.id.hashCode,
-//                     "title_lesson".i18n,
-//                     "body_lesson_substituted".i18n.fill(
-//                       [
-//                         lesson.lessonIndex,
-//                         lesson.name,
-//                         dayTitle(lesson.date),
-//                         ((lesson.substituteTeacher?.isRenamed ?? false)
-//                                 ? lesson.substituteTeacher?.renamedTo!
-//                                 : lesson.substituteTeacher?.name) ??
-//                             '',
-//                       ],
-//                     ),
-//                     notificationDetails,
-//                     payload: "timetable",
-//                   );
-//                   break;
-//                 }
-//             }
-//           }
-//         } else {
-//           if (lesson.status?.name == "Elmaradt") {
-//             switch (I18n.localeStr) {
-//               case "en_en":
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                     lesson.id.hashCode,
-//                     "title_lesson".i18n,
-//                     "body_lesson_canceled_multiuser".i18n.fill(
-//                       [
-//                         currentuserProvider.displayName!,
-//                         lesson.lessonIndex,
-//                         lesson.name,
-//                         dayTitle(lesson.date)
-//                       ],
-//                     ),
-//                     notificationDetails,
-//                     payload: "timetable",
-//                   );
-//                   break;
-//                 }
-//               case "hu_hu":
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                     lesson.id.hashCode,
-//                     "title_lesson".i18n,
-//                     "body_lesson_canceled_multiuser".i18n.fill(
-//                       [
-//                         currentuserProvider.displayName!,
-//                         dayTitle(lesson.date),
-//                         lesson.lessonIndex,
-//                         lesson.name
-//                       ],
-//                     ),
-//                     notificationDetails,
-//                     payload: "timetable",
-//                   );
-//                   break;
-//                 }
-//               default:
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                     lesson.id.hashCode,
-//                     "title_lesson".i18n,
-//                     "body_lesson_canceled_multiuser".i18n.fill(
-//                       [
-//                         currentuserProvider.displayName!,
-//                         lesson.lessonIndex,
-//                         lesson.name,
-//                         dayTitle(lesson.date)
-//                       ],
-//                     ),
-//                     notificationDetails,
-//                     payload: "timetable",
-//                   );
-//                   break;
-//                 }
-//             }
-//           } else if (lesson.substituteTeacher?.name != "") {
-//             switch (I18n.localeStr) {
-//               case "en_en":
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                     lesson.id.hashCode,
-//                     "title_lesson".i18n,
-//                     "body_lesson_substituted_multiuser".i18n.fill(
-//                       [
-//                         currentuserProvider.displayName!,
-//                         lesson.lessonIndex,
-//                         lesson.name,
-//                         dayTitle(lesson.date),
-//                         ((lesson.substituteTeacher?.isRenamed ?? false)
-//                                 ? lesson.substituteTeacher?.renamedTo!
-//                                 : lesson.substituteTeacher?.name) ??
-//                             '',
-//                       ],
-//                     ),
-//                     notificationDetails,
-//                     payload: "timetable",
-//                   );
-//                   break;
-//                 }
-//               case "hu_hu":
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                     lesson.id.hashCode,
-//                     "title_lesson".i18n,
-//                     "body_lesson_substituted_multiuser".i18n.fill(
-//                       [
-//                         currentuserProvider.displayName!,
-//                         dayTitle(lesson.date),
-//                         lesson.lessonIndex,
-//                         lesson.name,
-//                         ((lesson.substituteTeacher?.isRenamed ?? false)
-//                                 ? lesson.substituteTeacher?.renamedTo!
-//                                 : lesson.substituteTeacher?.name) ??
-//                             '',
-//                       ],
-//                     ),
-//                     notificationDetails,
-//                     payload: "timetable",
-//                   );
-//                   break;
-//                 }
-//               default:
-//                 {
-//                   await flutterLocalNotificationsPlugin.show(
-//                     lesson.id.hashCode,
-//                     "title_lesson".i18n,
-//                     "body_lesson_substituted_multiuser".i18n.fill(
-//                       [
-//                         currentuserProvider.displayName!,
-//                         lesson.lessonIndex,
-//                         lesson.name,
-//                         dayTitle(lesson.date),
-//                         (lesson.substituteTeacher?.isRenamed ?? false)
-//                             ? lesson.substituteTeacher!.renamedTo!
-//                             : lesson.substituteTeacher!.name
-//                       ],
-//                     ),
-//                     notificationDetails,
-//                     payload: "timetable",
-//                   );
-//                   break;
-//                 }
-//             }
-//           }
-//         }
-//       }
-//     }
-//     // lesson.date does not contain time, only the date
-//     await database.userStore.storeLastSeen(
-//         latestLesson?.start ?? DateTime.now(),
-//         userId: currentuserProvider.id!,
-//         category: LastSeenCategory.lesson);
-//   }
+      if (settings.notificationsGradesEnabled && _bitEnabled(settings, 2)) {
+        await _gradeNotifications(
+          database: database,
+          settings: settings,
+          userProvider: userProviderForUser,
+          kreta: kreta,
+        );
+      }
 
-//   // Called when the user taps a notification
-//   void onDidReceiveNotificationResponse(
-//       NotificationResponse notificationResponse) async {
-//     final String? payload = notificationResponse.payload;
-//     if (notificationResponse.payload != null) {
-//       debugPrint('notification payload: $payload');
-//     }
-//     switch (payload) {
-//       case "timetable":
-//         locator<NavigationService>().navigateTo("timetable");
-//         break;
-//       case "grades":
-//         locator<NavigationService>().navigateTo("grades");
-//         break;
-//       case "messages":
-//         locator<NavigationService>().navigateTo("messages");
-//         break;
-//       case "absences":
-//         locator<NavigationService>().navigateTo("absences");
-//         break;
-//       case "settings":
-//         locator<NavigationService>().navigateTo("settings");
-//         break;
-//       default:
-//         break;
-//     }
-//   }
+      if (settings.notificationsAbsencesEnabled && _bitEnabled(settings, 6)) {
+        await _absenceNotifications(
+          database: database,
+          settings: settings,
+          userProvider: userProviderForUser,
+          kreta: kreta,
+        );
+      }
 
-//   // Set all notification categories to seen
-//   Future<void> setAllCategoriesSeen(UserProvider userProvider) async {
-//     if (userProvider.id != null) {
-//       for (LastSeenCategory category in LastSeenCategory.values) {
-//         await database.userStore.storeLastSeen(DateTime.now(),
-//             userId: userProvider.id!, category: category);
-//       }
-//     }
-//   }
-// }
+      if (settings.notificationsMessagesEnabled && _bitEnabled(settings, 4)) {
+        await _messageNotifications(
+          database: database,
+          settings: settings,
+          userProvider: userProviderForUser,
+          kreta: kreta,
+        );
+      }
+
+      if (settings.notificationsLessonsEnabled && _bitEnabled(settings, 5)) {
+        await _lessonNotifications(
+          database: database,
+          settings: settings,
+          userProvider: userProviderForUser,
+          kreta: kreta,
+        );
+      }
+
+      if (_bitEnabled(settings, 7)) {
+        await _examNotifications(
+          database: database,
+          settings: settings,
+          userProvider: userProviderForUser,
+          kreta: kreta,
+        );
+      }
+    }
+  }
+
+  bool _bitEnabled(SettingsProvider settings, int bit) {
+    return (settings.notificationsBitfield & (1 << bit)) != 0;
+  }
+
+  NotificationDetails _details(SettingsProvider settings, String channelName) {
+    return NotificationDetails(
+      android: AndroidNotificationDetails(
+        'GENERAL',
+        'General',
+        channelDescription: channelName,
+        importance: Importance.max,
+        priority: Priority.max,
+        color: settings.customAccentColor,
+      ),
+      iOS: const DarwinNotificationDetails(),
+      macOS: const DarwinNotificationDetails(),
+      linux: const LinuxNotificationDetails(),
+    );
+  }
+
+  String _subjectName(dynamic subject, SettingsProvider settings) {
+    if ((subject.isRenamed as bool) && settings.renamedSubjectsEnabled) {
+      return (subject.renamedTo as String?) ?? (subject.name as String);
+    }
+    return subject.name as String;
+  }
+
+  String _teacherName(dynamic teacher, SettingsProvider settings) {
+    if ((teacher.isRenamed as bool) && settings.renamedTeachersEnabled) {
+      return (teacher.renamedTo as String?) ?? (teacher.name as String);
+    }
+    return teacher.name as String;
+  }
+
+  String _dayName(DateTime date, String lang) {
+    final locale = '${lang}_${lang.toUpperCase()}';
+    final day = DateFormat('EEEE', locale).format(date);
+    return day[0].toUpperCase() + day.substring(1);
+  }
+
+  bool _isLessonChanged(Lesson lesson) {
+    final isCanceled = lesson.status?.name == 'Elmaradt';
+    final hasSubstitute = lesson.substituteTeacher != null &&
+        lesson.substituteTeacher!.name != '';
+    return isCanceled || hasSubstitute;
+  }
+
+  String _lessonChangeFingerprint(Lesson lesson) {
+    final isCanceled = lesson.status?.name == 'Elmaradt';
+    if (isCanceled) return 'canceled';
+    final substituteName = lesson.substituteTeacher?.name ?? '';
+    return 'substitute:$substituteName';
+  }
+
+  Future<DateTime?> _lastSeenOrPrime({
+    required DatabaseProvider database,
+    required String userId,
+    required LastSeenCategory category,
+  }) async {
+    final lastSeen =
+        await database.userQuery.lastSeen(userId: userId, category: category);
+    if (lastSeen.millisecondsSinceEpoch <= 0 || lastSeen.year <= 1970) {
+      await database.userStore.storeLastSeen(
+        DateTime.now(),
+        userId: userId,
+        category: category,
+      );
+      return null;
+    }
+    return lastSeen;
+  }
+
+  Future<void> _gradeNotifications({
+    required DatabaseProvider database,
+    required SettingsProvider settings,
+    required UserProvider userProvider,
+    required KretaClient kreta,
+  }) async {
+    final userId = userProvider.id;
+    if (userId == null || userProvider.user == null) return;
+
+    final iss = userProvider.user!.instituteCode;
+    final gradesJson = await kreta.getAPI(KretaAPI.grades(iss));
+    if (gradesJson is! List) return;
+
+    final primed = await _lastSeenOrPrime(
+      database: database,
+      userId: userId,
+      category: LastSeenCategory.grade,
+    );
+    if (primed == null) return;
+    final grades = gradesJson.map((e) => Grade.fromJson(e)).toList();
+
+    for (final grade in grades) {
+      if (![1, 2, 3, 4, 5].contains(grade.value.value)) continue;
+      if (!grade.date.isAfter(primed)) continue;
+      if (DateTime.now().difference(grade.date).inDays >= 7) continue;
+
+      final title = settings.language == 'hu'
+          ? 'Új jegy'
+          : (settings.language == 'de' ? 'Neue Note' : 'New grade');
+
+      final subject = _subjectName(grade.subject, settings);
+      final surpriseBody = settings.language == 'hu'
+          ? '$subject: Nyisd meg az alkalmazást a jegyed megtekintéséhez!'
+          : (settings.language == 'de'
+              ? '$subject: Öffnen Sie die App, um Ihre Note anzuzeigen!'
+              : '$subject: Open the app to see your grade!');
+      final bodySingle = settings.gradeOpeningFun
+          ? surpriseBody
+          : '$subject: ${grade.value.value}';
+      final bodyMulti =
+          '(${userProvider.displayName ?? userProvider.name ?? ''}) $bodySingle';
+
+      await _plugin.show(
+        grade.id.hashCode,
+        title,
+        userProvider.getUsers().length == 1 ? bodySingle : bodyMulti,
+        _details(settings, 'Grade notifications'),
+        payload: 'grades',
+      );
+    }
+
+    await database.userStore.storeLastSeen(
+      DateTime.now(),
+      userId: userId,
+      category: LastSeenCategory.grade,
+    );
+  }
+
+  Future<void> _absenceNotifications({
+    required DatabaseProvider database,
+    required SettingsProvider settings,
+    required UserProvider userProvider,
+    required KretaClient kreta,
+  }) async {
+    final userId = userProvider.id;
+    if (userId == null || userProvider.user == null) return;
+
+    final absencesJson =
+        await kreta.getAPI(KretaAPI.absences(userProvider.user!.instituteCode));
+    if (absencesJson is! List) return;
+
+    final primed = await _lastSeenOrPrime(
+      database: database,
+      userId: userId,
+      category: LastSeenCategory.absence,
+    );
+    if (primed == null) return;
+    final absences = absencesJson.map((e) => Absence.fromJson(e)).toList();
+
+    for (final absence in absences) {
+      if (!absence.date.isAfter(primed)) continue;
+
+      final title = settings.language == 'hu'
+          ? 'Új hiányzás'
+          : (settings.language == 'de'
+              ? 'Abwesenheit aufgezeichnet'
+              : 'Absence recorded');
+      final subject = _subjectName(absence.subject, settings);
+      final dateText = DateFormat('yyyy-MM-dd').format(absence.date);
+      final baseBody = settings.language == 'hu'
+          ? '$dateText napon $subject tantárgyból'
+          : 'on $dateText for $subject';
+
+      await _plugin.show(
+        absence.id.hashCode,
+        title,
+        userProvider.getUsers().length == 1
+            ? baseBody
+            : '(${userProvider.displayName ?? userProvider.name ?? ''}) $baseBody',
+        _details(settings, 'Absence notifications'),
+        payload: 'absences',
+      );
+    }
+
+    await database.userStore.storeLastSeen(
+      DateTime.now(),
+      userId: userId,
+      category: LastSeenCategory.absence,
+    );
+  }
+
+  Future<void> _messageNotifications({
+    required DatabaseProvider database,
+    required SettingsProvider settings,
+    required UserProvider userProvider,
+    required KretaClient kreta,
+  }) async {
+    final userId = userProvider.id;
+    if (userId == null) return;
+
+    final messagesJson = await kreta.getAPI(KretaAPI.messages('beerkezett'));
+    if (messagesJson is! List) return;
+
+    final primed = await _lastSeenOrPrime(
+      database: database,
+      userId: userId,
+      category: LastSeenCategory.message,
+    );
+    if (primed == null) return;
+
+    final messages = <Message>[];
+    for (final item in messagesJson.cast<Map>()) {
+      final messageId = item['azonosito']?.toString();
+      if (messageId == null || messageId.isEmpty) continue;
+      final fullMessage = await kreta.getAPI(KretaAPI.message(messageId));
+      if (fullMessage is Map) {
+        messages
+            .add(Message.fromJson(fullMessage, forceType: MessageType.inbox));
+      }
+    }
+
+    for (final message in messages) {
+      if (!message.date.isAfter(primed)) continue;
+
+      final body = message.content.replaceAll(RegExp(r'<[^>]*>'), '').trim();
+      final title = userProvider.getUsers().length == 1
+          ? message.author
+          : '(${userProvider.displayName ?? userProvider.name ?? ''}) ${message.author}';
+
+      await _plugin.show(
+        message.id,
+        title,
+        body,
+        _details(settings, 'Message notifications'),
+        payload: 'messages',
+      );
+    }
+
+    await database.userStore.storeLastSeen(
+      DateTime.now(),
+      userId: userId,
+      category: LastSeenCategory.message,
+    );
+  }
+
+  Future<void> _lessonNotifications({
+    required DatabaseProvider database,
+    required SettingsProvider settings,
+    required UserProvider userProvider,
+    required KretaClient kreta,
+  }) async {
+    final userId = userProvider.id;
+    if (userId == null) return;
+
+    final previousLessonsByWeek =
+        await database.userQuery.getLessons(userId: userId);
+    final previousLessons = previousLessonsByWeek[Week.current()] ?? <Lesson>[];
+    final previousById = {
+      for (final lesson in previousLessons) lesson.id: lesson,
+    };
+
+    final timetableProvider = TimetableProvider(
+      user: userProvider,
+      database: database,
+      kreta: kreta,
+    );
+    await timetableProvider.restoreUser();
+    await timetableProvider.fetch(week: Week.current());
+    final lessons = timetableProvider.getWeek(Week.current()) ?? <Lesson>[];
+
+    final primed = await _lastSeenOrPrime(
+      database: database,
+      userId: userId,
+      category: LastSeenCategory.lesson,
+    );
+    if (primed == null) return;
+
+    Lesson? latestChangedLesson;
+
+    for (final lesson in lessons) {
+      final isCanceled = lesson.status?.name == 'Elmaradt';
+      final isChanged = _isLessonChanged(lesson);
+
+      final previousLesson = previousById[lesson.id];
+      final wasChanged =
+          previousLesson != null && _isLessonChanged(previousLesson);
+      final isNewChange = !wasChanged ||
+          _lessonChangeFingerprint(previousLesson) !=
+              _lessonChangeFingerprint(lesson);
+
+      if (!isChanged || !isNewChange || !lesson.start.isAfter(primed)) continue;
+
+      if (latestChangedLesson == null ||
+          lesson.start.isAfter(latestChangedLesson.start)) {
+        latestChangedLesson = lesson;
+      }
+
+      final title = settings.language == 'hu'
+          ? 'Órarend szerkesztve'
+          : (settings.language == 'de'
+              ? 'Fahrplan geändert'
+              : 'Timetable modified');
+
+      final day = _dayName(lesson.date, settings.language);
+      final subject = lesson.name;
+
+      String body;
+      if (isCanceled) {
+        body = settings.language == 'hu'
+            ? '$day: ${lesson.lessonIndex}. óra ($subject) elmarad'
+            : 'Lesson #${lesson.lessonIndex} ($subject) has been canceled on $day';
+      } else {
+        final teacherName = _teacherName(lesson.substituteTeacher!, settings);
+        body = settings.language == 'hu'
+            ? '$day: ${lesson.lessonIndex}. óra ($subject), helyettesítő: $teacherName'
+            : 'Lesson #${lesson.lessonIndex} ($subject) on $day will be substituted by $teacherName';
+      }
+
+      if (userProvider.getUsers().length > 1) {
+        body = '(${userProvider.displayName ?? userProvider.name ?? ''}) $body';
+      }
+
+      await _plugin.show(
+        lesson.id.hashCode,
+        title,
+        body,
+        _details(settings, 'Timetable notifications'),
+        payload: 'timetable',
+      );
+    }
+
+    await database.userStore.storeLastSeen(
+      latestChangedLesson?.start ?? DateTime.now(),
+      userId: userId,
+      category: LastSeenCategory.lesson,
+    );
+  }
+
+  Future<void> _examNotifications({
+    required DatabaseProvider database,
+    required SettingsProvider settings,
+    required UserProvider userProvider,
+    required KretaClient kreta,
+  }) async {
+    final userId = userProvider.id;
+    if (userId == null || userProvider.user == null) return;
+
+    final examsJson =
+        await kreta.getAPI(KretaAPI.exams(userProvider.user!.instituteCode));
+    if (examsJson is! List) return;
+
+    final primed = await _lastSeenOrPrime(
+      database: database,
+      userId: userId,
+      category: LastSeenCategory.exam,
+    );
+    if (primed == null) return;
+    final exams = examsJson.map((e) => Exam.fromJson(e)).toList();
+
+    for (final exam in exams) {
+      final announceDate = exam.date;
+      if (!announceDate.isAfter(primed)) continue;
+
+      final title = settings.language == 'hu'
+          ? 'Új dolgozat'
+          : (settings.language == 'de' ? 'Neue Prüfung' : 'New exam');
+      final subject = _subjectName(exam.subject, settings);
+      final examDay = DateFormat('yyyy-MM-dd').format(exam.writeDate);
+      var body = settings.language == 'hu'
+          ? '$subject • $examDay'
+          : '$subject • $examDay';
+
+      if (userProvider.getUsers().length > 1) {
+        body = '(${userProvider.displayName ?? userProvider.name ?? ''}) $body';
+      }
+
+      await _plugin.show(
+        exam.id.hashCode,
+        title,
+        body,
+        _details(settings, 'Exam notifications'),
+        payload: 'timetable',
+      );
+    }
+
+    await database.userStore.storeLastSeen(
+      DateTime.now(),
+      userId: userId,
+      category: LastSeenCategory.exam,
+    );
+  }
+
+  Future<void> setAllCategoriesSeen(UserProvider userProvider) async {
+    final database = DatabaseProvider();
+    await database.init();
+
+    final now = DateTime.now();
+    for (final user in userProvider.getUsers()) {
+      for (final category in LastSeenCategory.values) {
+        await database.userStore.storeLastSeen(
+          now,
+          userId: user.id,
+          category: category,
+        );
+      }
+    }
+  }
+
+  Future<void> setCategorySeenForAllUsers(
+    UserProvider userProvider,
+    LastSeenCategory category, {
+    DateTime? at,
+  }) async {
+    final database = DatabaseProvider();
+    await database.init();
+
+    final now = at ?? DateTime.now();
+    for (final user in userProvider.getUsers()) {
+      await database.userStore.storeLastSeen(
+        now,
+        userId: user.id,
+        category: category,
+      );
+    }
+  }
+
+  void onDidReceiveNotificationResponse(NotificationResponse response) {
+    final payload = response.payload;
+    if (payload == null || payload.isEmpty) return;
+
+    switch (payload) {
+      case 'timetable':
+      case 'grades':
+      case 'messages':
+      case 'absences':
+      case 'settings':
+        locator<NavigationService>().navigateTo(payload);
+        break;
+      default:
+        break;
+    }
+  }
+}

@@ -707,10 +707,11 @@ class GradesPageState extends State<GradesPage> {
               //   return;
               // }
 
-              // SoonAlert.show(context: context);
-              gradeCalcTotal(context);
-
               Navigator.of(context, rootNavigator: true).pop();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                gradeCalcTotal(_scaffoldKey.currentContext ?? context);
+              });
             },
           ),
         ),

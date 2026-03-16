@@ -1,5 +1,7 @@
 # <img src="https://raw.githubusercontent.com/QwIT-Development/app-legacy/2d22a8de31de8a46424a3a3dafb686f7f21942d9/dave.gif" alt width="100px"> Firka - *reFilc legacy*
 
+### Vibecodeolt szar (a fork) de elvileg megy a notification + átlag számoló
+
 ### Nem hivatalos e-napló alkalmazás az e-KRÉTA rendszerhez - tanulóktól, tanulóknak.
 
 [![GitHub Letöltések](https://img.shields.io/github/downloads-pre/QwIT-Development/app-legacy/latest/total?style=for-the-badge&logo=github&logoColor=EAF7CC&label=Let%C3%B6lt%C3%A9sek&labelColor=141905&color=A7DC22)](https://github.com/QwIT-Development/app-legacy/releases/latest)

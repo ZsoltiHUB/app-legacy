@@ -62,6 +62,7 @@ import 'package:refilc_mobile_ui/screens/settings/accounts/account_view.dart';
 import 'package:refilc_mobile_ui/screens/settings/privacy_view.dart';
 import 'package:refilc_mobile_ui/screens/settings/settings_helper.dart';
 import 'package:refilc_mobile_ui/screens/settings/submenu/extras_screen.dart';
+import 'package:refilc_mobile_ui/screens/settings/notifications_screen.dart';
 import 'package:refilc_mobile_ui/screens/settings/submenu/personalize_screen.dart';
 import 'package:flutter/foundation.dart';
 
@@ -754,18 +755,18 @@ class SettingsScreenState extends State<SettingsScreen>
                   ),
 
                   // notifications
-                  //const SplittedPanel(
-                  //  padding: EdgeInsets.only(top: 8.0),
-                  //  cardPadding: EdgeInsets.all(4.0),
-                  //  children: [
-                   //   /*MenuNotifications(
-                   //     borderRadius: BorderRadius.vertical(
-                   //       top: Radius.circular(12.0),
-                   //       bottom: Radius.circular(12.0),
-                   //     ),
-                    //  ),*/
-                  //  ],
-                  //),
+                  const SplittedPanel(
+                    padding: EdgeInsets.only(top: 8.0),
+                    cardPadding: EdgeInsets.all(4.0),
+                    children: [
+                      MenuNotifications(
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(4.0),
+                          bottom: Radius.circular(4.0),
+                        ),
+                      ),
+                    ],
+                  ),
 
                   // extras
                   const SplittedPanel(

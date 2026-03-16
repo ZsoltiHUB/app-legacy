@@ -112,10 +112,12 @@ android {
         }
 
         release {
-            keyAlias keystoreProperties['keyAlias']
-            keyPassword keystoreProperties['keyPassword']
-            storeFile file(keystoreProperties['storeFile'])
-            storePassword keystoreProperties['storePassword']
+            if (keystorePropertiesFile.exists() && keystoreProperties['storeFile']) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+            }
         }
     }
 
@@ -125,7 +127,9 @@ android {
         }
 
         release {
-            signingConfig signingConfigs.release
+            signingConfig keystorePropertiesFile.exists() && keystoreProperties['storeFile']
+                    ? signingConfigs.release
+                    : signingConfigs.debug
             shrinkResources true
             minifyEnabled true
             debuggable false
