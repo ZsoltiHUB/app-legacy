@@ -6,6 +6,7 @@ jobs:
   build-android:
     name: Build for Android
     runs-on: ubuntu-latest
+    environment: firka
     permissions:
       contents: read
     env:
