@@ -8,6 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
 
     steps:
       - name: Download repository
@@ -15,23 +19,23 @@ jobs:
 
       - name: Download Android keystore
         id: android_keystore
-        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.KEY_PASSWORD != '' && secrets.KEY_ALIAS != '' }}
+        if: ${{ env.KEYSTORE_BASE64 != '' && env.KEY_PASSWORD != '' && env.KEY_ALIAS != '' }}
         uses: timheuer/base64-to-file@v1.2.4
         with:
           fileName: firkaapp.jks
-          encodedString: ${{ secrets.KEYSTORE_BASE64 }}
+          encodedString: ${{ env.KEYSTORE_BASE64 }}
 
       - name: Create key.properties
-        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.KEY_PASSWORD != '' && secrets.KEY_ALIAS != '' }}
+        if: ${{ env.KEYSTORE_BASE64 != '' && env.KEY_PASSWORD != '' && env.KEY_ALIAS != '' }}
         run: |
           echo "storeFile=${{ steps.android_keystore.outputs.filePath }}" > refilc/android/key.properties
-          echo "storePassword=${{ secrets.KEY_PASSWORD }}" >> refilc/android/key.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> refilc/android/key.properties
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> refilc/android/key.properties
+          echo "storePassword=${{ env.KEY_PASSWORD }}" >> refilc/android/key.properties
+          echo "keyPassword=${{ env.KEY_PASSWORD }}" >> refilc/android/key.properties
+          echo "keyAlias=${{ env.KEY_ALIAS }}" >> refilc/android/key.properties
           cp refilc/android/key.properties refilc/android/debugkey.properties
 
       - name: Keystore not configured (debug-signed release)
-        if: ${{ secrets.KEYSTORE_BASE64 == '' || secrets.KEY_PASSWORD == '' || secrets.KEY_ALIAS == '' }}
+        if: ${{ env.KEYSTORE_BASE64 == '' || env.KEY_PASSWORD == '' || env.KEY_ALIAS == '' }}
         run: echo "Android signing secrets are missing, continuing with debug signing fallback."
 
       - uses: actions/setup-java@v4.7.0
