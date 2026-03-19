@@ -34,9 +34,36 @@ class NotificationsHelper {
   static final NotificationsHelper _instance = NotificationsHelper._();
   factory NotificationsHelper() => _instance;
 
+  static final ValueNotifier<List<String>> _debugLogs =
+      ValueNotifier<List<String>>(<String>[]);
+
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _initialized = false;
+
+  ValueListenable<List<String>> get debugLogsListenable => _debugLogs;
+
+  List<String> getDebugLogs() => List<String>.from(_debugLogs.value);
+
+  void clearDebugLogs() {
+    _debugLogs.value = <String>[];
+  }
+
+  Future<void> runDebugCheckNow() => backgroundJob();
+
+  void _debugLog(String message, {SettingsProvider? settings}) {
+    if (kDebugMode || (settings?.developerMode ?? false)) {
+      final line =
+          '${DateTime.now().toIso8601String()} [Notifications] $message';
+      debugPrint(line);
+
+      final updated = List<String>.from(_debugLogs.value)..add(line);
+      if (updated.length > 400) {
+        updated.removeRange(0, updated.length - 400);
+      }
+      _debugLogs.value = updated;
+    }
+  }
 
   Future<void> initialize() async {
     if (_initialized || kIsWeb) return;
@@ -124,6 +151,11 @@ class NotificationsHelper {
     final settings = await database.query.getSettings(database);
     final users = await database.query.getUsers(settings);
 
+    _debugLog(
+      'Background job started. enabled=${settings.notificationsEnabled}, users=${users.getUsers().length}',
+      settings: settings,
+    );
+
     if (!settings.notificationsEnabled || users.id == null) return;
 
     for (final user in users.getUsers()) {
@@ -140,8 +172,14 @@ class NotificationsHelper {
 
       final loginResult = await kreta.refreshLogin();
       if (loginResult != null && loginResult != 'success') {
+        _debugLog(
+          'Skipping user=${user.id} because login refresh failed: $loginResult',
+          settings: settings,
+        );
         continue;
       }
+
+      _debugLog('Processing user=${user.id}', settings: settings);
 
       if (settings.notificationsGradesEnabled && _bitEnabled(settings, 2)) {
         await _gradeNotifications(
@@ -436,9 +474,16 @@ class NotificationsHelper {
     final userId = userProvider.id;
     if (userId == null) return;
 
+    final now = DateTime.now();
+    final currentWeek = Week.current();
+    final nextWeek = currentWeek.next();
+
     final previousLessonsByWeek =
         await database.userQuery.getLessons(userId: userId);
-    final previousLessons = previousLessonsByWeek[Week.current()] ?? <Lesson>[];
+    final previousLessons = <Lesson>[
+      ...(previousLessonsByWeek[currentWeek] ?? const <Lesson>[]),
+      ...(previousLessonsByWeek[nextWeek] ?? const <Lesson>[]),
+    ];
     final previousById = {
       for (final lesson in previousLessons) lesson.id: lesson,
     };
@@ -449,21 +494,40 @@ class NotificationsHelper {
       kreta: kreta,
     );
     await timetableProvider.restoreUser();
-    await timetableProvider.fetch(week: Week.current());
-    final lessons = timetableProvider.getWeek(Week.current()) ?? <Lesson>[];
+    await timetableProvider.fetch(week: currentWeek);
+    await timetableProvider.fetch(week: nextWeek);
+    final lessons = <Lesson>[
+      ...(timetableProvider.getWeek(currentWeek) ?? const <Lesson>[]),
+      ...(timetableProvider.getWeek(nextWeek) ?? const <Lesson>[]),
+    ];
 
     final primed = await _lastSeenOrPrime(
       database: database,
       userId: userId,
       category: LastSeenCategory.lesson,
     );
-    if (primed == null) return;
+    if (primed == null) {
+      _debugLog(
+        'Lesson notifications primed last-seen for user=$userId; skipping this cycle to avoid historical spam.',
+        settings: settings,
+      );
+      return;
+    }
 
-    Lesson? latestChangedLesson;
+    _debugLog(
+      'Lesson check for user=$userId: primed=$primed, now=$now, lessons=${lessons.length}, prevLessons=${previousLessons.length}',
+      settings: settings,
+    );
+
+    var changedCount = 0;
+    var afterLastSeenCount = 0;
+    var newChangeCount = 0;
+    var notifiedCount = 0;
 
     for (final lesson in lessons) {
       final isCanceled = lesson.status?.name == 'Elmaradt';
       final isChanged = _isLessonChanged(lesson);
+      if (isChanged) changedCount++;
 
       final previousLesson = previousById[lesson.id];
       final wasChanged =
@@ -471,13 +535,12 @@ class NotificationsHelper {
       final isNewChange = !wasChanged ||
           _lessonChangeFingerprint(previousLesson) !=
               _lessonChangeFingerprint(lesson);
+      final isAfterLastSeen = lesson.start.isAfter(primed);
 
-      if (!isChanged || !isNewChange || !lesson.start.isAfter(primed)) continue;
+      if (isAfterLastSeen) afterLastSeenCount++;
+      if (isChanged && isNewChange) newChangeCount++;
 
-      if (latestChangedLesson == null ||
-          lesson.start.isAfter(latestChangedLesson.start)) {
-        latestChangedLesson = lesson;
-      }
+      if (!isChanged || !isNewChange || !isAfterLastSeen) continue;
 
       final title = settings.language == 'hu'
           ? 'Órarend szerkesztve'
@@ -511,10 +574,21 @@ class NotificationsHelper {
         _details(settings, 'Timetable notifications'),
         payload: 'timetable',
       );
+
+      notifiedCount++;
+      _debugLog(
+        'Lesson notified user=$userId id=${lesson.id} start=${lesson.start.toIso8601String()} changed=${_lessonChangeFingerprint(lesson)}',
+        settings: settings,
+      );
     }
 
+    _debugLog(
+      'Lesson summary user=$userId changed=$changedCount afterLastSeen=$afterLastSeenCount newChange=$newChangeCount notified=$notifiedCount',
+      settings: settings,
+    );
+
     await database.userStore.storeLastSeen(
-      latestChangedLesson?.start ?? DateTime.now(),
+      now,
       userId: userId,
       category: LastSeenCategory.lesson,
     );

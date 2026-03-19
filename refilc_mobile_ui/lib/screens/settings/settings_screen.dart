@@ -62,6 +62,7 @@ import 'package:refilc_mobile_ui/screens/settings/accounts/account_view.dart';
 import 'package:refilc_mobile_ui/screens/settings/privacy_view.dart';
 import 'package:refilc_mobile_ui/screens/settings/settings_helper.dart';
 import 'package:refilc_mobile_ui/screens/settings/submenu/extras_screen.dart';
+import 'package:refilc_mobile_ui/screens/settings/submenu/notification_debug_screen.dart';
 import 'package:refilc_mobile_ui/screens/settings/notifications_screen.dart';
 import 'package:refilc_mobile_ui/screens/settings/submenu/personalize_screen.dart';
 import 'package:flutter/foundation.dart';
@@ -698,7 +699,8 @@ class SettingsScreenState extends State<SettingsScreen>
             ),
             Panel(
               hasShadow: false,
-              padding: const EdgeInsets.only(bottom: 20.0, left: 24.0, right: 24.0),
+              padding:
+                  const EdgeInsets.only(bottom: 20.0, left: 24.0, right: 24.0),
               title: Padding(
                 padding: const EdgeInsets.only(left: 24.0),
                 child: Text('settings'.i18n),
@@ -916,7 +918,8 @@ class SettingsScreenState extends State<SettingsScreen>
                   ),
                   title: const Text("GitHub"),
                   onPressed: () => launchUrl(
-                      Uri.parse("https://github.com/QwIT-Development/app-legacy"),
+                      Uri.parse(
+                          "https://github.com/QwIT-Development/app-legacy"),
                       mode: LaunchMode.externalApplication),
                   borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(4.0),
@@ -1082,6 +1085,34 @@ class SettingsScreenState extends State<SettingsScreen>
                     )),
                   ),
                   PanelButton(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(4.0),
+                      bottom: Radius.circular(4.0),
+                    ),
+                    leading: Icon(
+                      Icons.notifications_active_outlined,
+                      size: 22.0,
+                      color: AppColors.of(context).text.withOpacity(.95),
+                    ),
+                    title: const Text('Notification Debug Logs'),
+                    onPressed: () {
+                      if (!settings.developerMode && !kDebugMode) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Enable Developer Mode first.'),
+                          ),
+                        );
+                        return;
+                      }
+
+                      Navigator.of(context, rootNavigator: true).push(
+                        CupertinoPageRoute(
+                          builder: (context) => const NotificationDebugScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  PanelButton(
                     borderRadius: BorderRadius.vertical(
                       top: const Radius.circular(4.0),
                       bottom: Provider.of<PlusProvider>(context, listen: false)
@@ -1110,10 +1141,10 @@ class SettingsScreenState extends State<SettingsScreen>
                   child: FutureBuilder<Map>(
                     future: futureRelease,
                     builder: (context, release) {
-                      String versionText =
-                        release.hasData && release.data != null ?
-                          "versiontext".i18n.fill([release.data!["version"]]) :
-                          "packagetext".i18n;
+                      String versionText = release.hasData &&
+                              release.data != null
+                          ? "versiontext".i18n.fill([release.data!["version"]])
+                          : "packagetext".i18n;
                       return DefaultTextStyle(
                         style: Theme.of(context)
                             .textTheme
