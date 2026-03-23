@@ -103,6 +103,11 @@ const userDataDB = DatabaseStruct("user_data", {
   "custom_lesson_desc": String,
   "watch_data": String,
 });
+const notificationLogsDB = DatabaseStruct("notification_logs", {
+  "id": int,
+  "created_at": int,
+  "message": String,
+});
 
 Future<void> createTable(Database db, DatabaseStruct struct) =>
     db.execute("CREATE TABLE IF NOT EXISTS ${struct.table} ($struct)");
@@ -123,6 +128,7 @@ Future<Database> initDB(DatabaseProvider database) async {
   await createTable(db, settingsDB);
   await createTable(db, usersDB);
   await createTable(db, userDataDB);
+  await createTable(db, notificationLogsDB);
 
   if ((await db.rawQuery("SELECT COUNT(*) FROM settings"))[0].values.first ==
       0) {

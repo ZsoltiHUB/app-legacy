@@ -53,6 +53,22 @@ class DatabaseQuery {
     }
     return userProvider;
   }
+
+  Future<List<String>> getNotificationLogs({int limit = 400}) async {
+    final rows = await db.query(
+      'notification_logs',
+      columns: ['message'],
+      orderBy: 'rowid DESC',
+      limit: limit,
+    );
+
+    return rows
+        .map((row) => (row['message'] as String?) ?? '')
+        .where((line) => line.isNotEmpty)
+        .toList()
+        .reversed
+        .toList();
+  }
 }
 
 class UserDatabaseQuery {

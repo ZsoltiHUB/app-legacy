@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:async';
 import 'package:refilc/helpers/notification_helper.dart';
 import 'package:refilc/theme/colors/colors.dart';
 
@@ -13,6 +14,22 @@ class NotificationDebugScreen extends StatefulWidget {
 
 class _NotificationDebugScreenState extends State<NotificationDebugScreen> {
   bool _running = false;
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    NotificationsHelper().refreshDebugLogsFromStore();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      NotificationsHelper().refreshDebugLogsFromStore();
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
 
   Future<void> _runCheckNow() async {
     if (_running) return;
@@ -91,7 +108,9 @@ class _NotificationDebugScreenState extends State<NotificationDebugScreen> {
                       tooltip: 'Clear logs',
                       onPressed: logs.isEmpty
                           ? null
-                          : () => NotificationsHelper().clearDebugLogs(),
+                          : () async {
+                              await NotificationsHelper().clearDebugLogs();
+                            },
                       icon: const Icon(Icons.delete_outline_rounded),
                     ),
                   ],

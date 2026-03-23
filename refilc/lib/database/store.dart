@@ -45,6 +45,27 @@ class DatabaseStore {
     await db.delete("users", where: "id = ?", whereArgs: [userId]);
     await db.delete("user_data", where: "id = ?", whereArgs: [userId]);
   }
+
+  Future<void> appendNotificationLog(String message) async {
+    await db.insert('notification_logs', {
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+      'message': message,
+    });
+
+    const maxRows = 800;
+    await db.execute(
+      '''
+      DELETE FROM notification_logs
+      WHERE rowid NOT IN (
+        SELECT rowid FROM notification_logs ORDER BY rowid DESC LIMIT $maxRows
+      )
+      ''',
+    );
+  }
+
+  Future<void> clearNotificationLogs() async {
+    await db.delete('notification_logs');
+  }
 }
 
 class UserDatabaseStore {

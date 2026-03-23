@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'
@@ -36,6 +37,7 @@ class NotificationsHelper {
 
   static final ValueNotifier<List<String>> _debugLogs =
       ValueNotifier<List<String>>(<String>[]);
+  static String? _pendingOpenPayload;
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -45,11 +47,31 @@ class NotificationsHelper {
 
   List<String> getDebugLogs() => List<String>.from(_debugLogs.value);
 
-  void clearDebugLogs() {
+  Future<void> refreshDebugLogsFromStore() async {
+    try {
+      final database = DatabaseProvider();
+      await database.init();
+      final logs = await database.query.getNotificationLogs(limit: 400);
+      _debugLogs.value = logs;
+    } catch (_) {}
+  }
+
+  Future<void> clearDebugLogs() async {
     _debugLogs.value = <String>[];
+    try {
+      final database = DatabaseProvider();
+      await database.init();
+      await database.store.clearNotificationLogs();
+    } catch (_) {}
   }
 
   Future<void> runDebugCheckNow() => backgroundJob();
+
+  String? consumePendingOpenPayload() {
+    final payload = _pendingOpenPayload;
+    _pendingOpenPayload = null;
+    return payload;
+  }
 
   void _debugLog(String message, {SettingsProvider? settings}) {
     if (kDebugMode || (settings?.developerMode ?? false)) {
@@ -62,6 +84,14 @@ class NotificationsHelper {
         updated.removeRange(0, updated.length - 400);
       }
       _debugLogs.value = updated;
+
+      unawaited(() async {
+        try {
+          final database = DatabaseProvider();
+          await database.init();
+          await database.store.appendNotificationLog(line);
+        } catch (_) {}
+      }());
     }
   }
 
@@ -156,6 +186,11 @@ class NotificationsHelper {
       settings: settings,
     );
 
+    _debugLog(
+      'Categories grades=${settings.notificationsGradesEnabled} absences=${settings.notificationsAbsencesEnabled} messages=${settings.notificationsMessagesEnabled} lessons=${settings.notificationsLessonsEnabled} examsBit=${_bitEnabled(settings, 7)} bitfield=${settings.notificationsBitfield}',
+      settings: settings,
+    );
+
     if (!settings.notificationsEnabled || users.id == null) return;
 
     for (final user in users.getUsers()) {
@@ -181,7 +216,7 @@ class NotificationsHelper {
 
       _debugLog('Processing user=${user.id}', settings: settings);
 
-      if (settings.notificationsGradesEnabled && _bitEnabled(settings, 2)) {
+      if (settings.notificationsGradesEnabled) {
         await _gradeNotifications(
           database: database,
           settings: settings,
@@ -190,7 +225,7 @@ class NotificationsHelper {
         );
       }
 
-      if (settings.notificationsAbsencesEnabled && _bitEnabled(settings, 6)) {
+      if (settings.notificationsAbsencesEnabled) {
         await _absenceNotifications(
           database: database,
           settings: settings,
@@ -199,7 +234,7 @@ class NotificationsHelper {
         );
       }
 
-      if (settings.notificationsMessagesEnabled && _bitEnabled(settings, 4)) {
+      if (settings.notificationsMessagesEnabled) {
         await _messageNotifications(
           database: database,
           settings: settings,
@@ -208,7 +243,7 @@ class NotificationsHelper {
         );
       }
 
-      if (settings.notificationsLessonsEnabled && _bitEnabled(settings, 5)) {
+      if (settings.notificationsLessonsEnabled) {
         await _lessonNotifications(
           database: database,
           settings: settings,
@@ -318,13 +353,32 @@ class NotificationsHelper {
       userId: userId,
       category: LastSeenCategory.grade,
     );
-    if (primed == null) return;
+    if (primed == null) {
+      _debugLog(
+        'Grade notifications primed last-seen for user=$userId; skipping this cycle to avoid historical spam.',
+        settings: settings,
+      );
+      return;
+    }
+
     final grades = gradesJson.map((e) => Grade.fromJson(e)).toList();
 
+    var numericOrTextCount = 0;
+    var afterLastSeenCount = 0;
+    var notifiedCount = 0;
+
     for (final grade in grades) {
-      if (![1, 2, 3, 4, 5].contains(grade.value.value)) continue;
-      if (!grade.date.isAfter(primed)) continue;
-      if (DateTime.now().difference(grade.date).inDays >= 7) continue;
+      final hasDisplayValue =
+          grade.value.value > 0 || grade.value.valueName.trim().isNotEmpty;
+      if (!hasDisplayValue) continue;
+      numericOrTextCount++;
+
+      final announcedAt = [grade.date, grade.writeDate, grade.seenDate].reduce(
+        (a, b) => a.isAfter(b) ? a : b,
+      );
+      final isAfterLastSeen = announcedAt.isAfter(primed);
+      if (!isAfterLastSeen) continue;
+      afterLastSeenCount++;
 
       final title = settings.language == 'hu'
           ? 'Új jegy'
@@ -336,9 +390,11 @@ class NotificationsHelper {
           : (settings.language == 'de'
               ? '$subject: Öffnen Sie die App, um Ihre Note anzuzeigen!'
               : '$subject: Open the app to see your grade!');
-      final bodySingle = settings.gradeOpeningFun
-          ? surpriseBody
-          : '$subject: ${grade.value.value}';
+      final gradeText = grade.value.value > 0
+          ? grade.value.value.toString()
+          : grade.value.valueName;
+      final bodySingle =
+          settings.gradeOpeningFun ? surpriseBody : '$subject: $gradeText';
       final bodyMulti =
           '(${userProvider.displayName ?? userProvider.name ?? ''}) $bodySingle';
 
@@ -349,7 +405,18 @@ class NotificationsHelper {
         _details(settings, 'Grade notifications'),
         payload: 'grades',
       );
+
+      notifiedCount++;
+      _debugLog(
+        'Grade notified user=$userId id=${grade.id} announcedAt=${announcedAt.toIso8601String()} type=${grade.type.name}',
+        settings: settings,
+      );
     }
+
+    _debugLog(
+      'Grade summary user=$userId total=${grades.length} valued=$numericOrTextCount afterLastSeen=$afterLastSeenCount notified=$notifiedCount primed=$primed',
+      settings: settings,
+    );
 
     await database.userStore.storeLastSeen(
       DateTime.now(),
@@ -523,6 +590,7 @@ class NotificationsHelper {
     var afterLastSeenCount = 0;
     var newChangeCount = 0;
     var notifiedCount = 0;
+    DateTime? latestNotifiedLessonStart;
 
     for (final lesson in lessons) {
       final isCanceled = lesson.status?.name == 'Elmaradt';
@@ -540,7 +608,7 @@ class NotificationsHelper {
       if (isAfterLastSeen) afterLastSeenCount++;
       if (isChanged && isNewChange) newChangeCount++;
 
-      if (!isChanged || !isNewChange || !isAfterLastSeen) continue;
+      if (!isChanged || !isAfterLastSeen) continue;
 
       final title = settings.language == 'hu'
           ? 'Órarend szerkesztve'
@@ -576,6 +644,10 @@ class NotificationsHelper {
       );
 
       notifiedCount++;
+      if (latestNotifiedLessonStart == null ||
+          lesson.start.isAfter(latestNotifiedLessonStart)) {
+        latestNotifiedLessonStart = lesson.start;
+      }
       _debugLog(
         'Lesson notified user=$userId id=${lesson.id} start=${lesson.start.toIso8601String()} changed=${_lessonChangeFingerprint(lesson)}',
         settings: settings,
@@ -588,7 +660,7 @@ class NotificationsHelper {
     );
 
     await database.userStore.storeLastSeen(
-      now,
+      latestNotifiedLessonStart ?? now,
       userId: userId,
       category: LastSeenCategory.lesson,
     );
@@ -685,6 +757,8 @@ class NotificationsHelper {
   void onDidReceiveNotificationResponse(NotificationResponse response) {
     final payload = response.payload;
     if (payload == null || payload.isEmpty) return;
+
+    _pendingOpenPayload = payload;
 
     switch (payload) {
       case 'timetable':

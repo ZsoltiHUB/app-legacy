@@ -2,6 +2,7 @@
 
 import 'package:flutter_svg/svg.dart';
 import 'package:refilc/api/providers/update_provider.dart';
+import 'package:refilc/helpers/notification_helper.dart';
 import 'package:refilc/helpers/quick_actions.dart';
 import 'package:refilc/models/settings.dart';
 import 'package:refilc/theme/observer.dart';
@@ -190,6 +191,10 @@ class NavigationScreenState extends State<NavigationScreen>
     // initial sync
     syncAll(context);
     setupQuickActions();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _handlePendingNotificationOpen();
+    });
   }
 
   @override
@@ -209,7 +214,27 @@ class NavigationScreenState extends State<NavigationScreen>
     super.didChangePlatformBrightness();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _handlePendingNotificationOpen();
+    }
+    super.didChangeAppLifecycleState(state);
+  }
+
   void setPage(String page) => setState(() => selected.name = page);
+
+  Future<void> _handlePendingNotificationOpen() async {
+    final payload = NotificationsHelper().consumePendingOpenPayload();
+    if (payload == null || payload.isEmpty) return;
+
+    await syncAll(context);
+    if (!mounted) return;
+
+    final page = payload == 'settings' ? 'home' : payload;
+    setPage(page);
+    _navigatorState.currentState?.pushNamedAndRemoveUntil(page, (_) => false);
+  }
 
   @override
   Widget build(BuildContext context) {
