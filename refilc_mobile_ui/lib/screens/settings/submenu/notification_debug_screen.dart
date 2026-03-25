@@ -93,8 +93,9 @@ class _NotificationDebugScreenState extends State<NotificationDebugScreen> {
                                     CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.play_arrow_rounded),
-                        label: Text(
-                            _running ? 'Running...' : 'Run notification check'),
+                        label: Text(_running
+                            ? 'Running...'
+                            : 'Run dry notification check'),
                       ),
                     ),
                     const SizedBox(width: 8),

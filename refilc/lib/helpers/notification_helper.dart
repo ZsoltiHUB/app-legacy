@@ -52,7 +52,9 @@ class NotificationsHelper {
       final database = DatabaseProvider();
       await database.init();
       final logs = await database.query.getNotificationLogs(limit: 400);
-      _debugLogs.value = logs;
+      if (logs.isNotEmpty) {
+        _debugLogs.value = logs;
+      }
     } catch (_) {}
   }
 
@@ -65,7 +67,7 @@ class NotificationsHelper {
     } catch (_) {}
   }
 
-  Future<void> runDebugCheckNow() => backgroundJob();
+  Future<void> runDebugCheckNow() => backgroundJob(dryRun: true);
 
   String? consumePendingOpenPayload() {
     final payload = _pendingOpenPayload;
@@ -172,7 +174,7 @@ class NotificationsHelper {
   }
 
   @pragma('vm:entry-point')
-  Future<void> backgroundJob() async {
+  Future<void> backgroundJob({bool dryRun = false}) async {
     await initialize();
 
     final database = DatabaseProvider();
@@ -185,6 +187,11 @@ class NotificationsHelper {
       'Background job started. enabled=${settings.notificationsEnabled}, users=${users.getUsers().length}',
       settings: settings,
     );
+
+    if (dryRun) {
+      _debugLog('Running in DRY-RUN mode: notifications will not be shown.',
+          settings: settings);
+    }
 
     _debugLog(
       'Categories grades=${settings.notificationsGradesEnabled} absences=${settings.notificationsAbsencesEnabled} messages=${settings.notificationsMessagesEnabled} lessons=${settings.notificationsLessonsEnabled} examsBit=${_bitEnabled(settings, 7)} bitfield=${settings.notificationsBitfield}',
@@ -222,6 +229,7 @@ class NotificationsHelper {
           settings: settings,
           userProvider: userProviderForUser,
           kreta: kreta,
+          dryRun: dryRun,
         );
       }
 
@@ -231,6 +239,7 @@ class NotificationsHelper {
           settings: settings,
           userProvider: userProviderForUser,
           kreta: kreta,
+          dryRun: dryRun,
         );
       }
 
@@ -240,6 +249,7 @@ class NotificationsHelper {
           settings: settings,
           userProvider: userProviderForUser,
           kreta: kreta,
+          dryRun: dryRun,
         );
       }
 
@@ -249,6 +259,7 @@ class NotificationsHelper {
           settings: settings,
           userProvider: userProviderForUser,
           kreta: kreta,
+          dryRun: dryRun,
         );
       }
 
@@ -258,6 +269,7 @@ class NotificationsHelper {
           settings: settings,
           userProvider: userProviderForUser,
           kreta: kreta,
+          dryRun: dryRun,
         );
       }
     }
@@ -340,6 +352,7 @@ class NotificationsHelper {
     required SettingsProvider settings,
     required UserProvider userProvider,
     required KretaClient kreta,
+    required bool dryRun,
   }) async {
     final userId = userProvider.id;
     if (userId == null || userProvider.user == null) return;
@@ -398,17 +411,19 @@ class NotificationsHelper {
       final bodyMulti =
           '(${userProvider.displayName ?? userProvider.name ?? ''}) $bodySingle';
 
-      await _plugin.show(
-        grade.id.hashCode,
-        title,
-        userProvider.getUsers().length == 1 ? bodySingle : bodyMulti,
-        _details(settings, 'Grade notifications'),
-        payload: 'grades',
-      );
+      if (!dryRun) {
+        await _plugin.show(
+          grade.id.hashCode,
+          title,
+          userProvider.getUsers().length == 1 ? bodySingle : bodyMulti,
+          _details(settings, 'Grade notifications'),
+          payload: 'grades',
+        );
+      }
 
       notifiedCount++;
       _debugLog(
-        'Grade notified user=$userId id=${grade.id} announcedAt=${announcedAt.toIso8601String()} type=${grade.type.name}',
+        '${dryRun ? 'Grade would notify' : 'Grade notified'} user=$userId id=${grade.id} announcedAt=${announcedAt.toIso8601String()} type=${grade.type.name}',
         settings: settings,
       );
     }
@@ -430,6 +445,7 @@ class NotificationsHelper {
     required SettingsProvider settings,
     required UserProvider userProvider,
     required KretaClient kreta,
+    required bool dryRun,
   }) async {
     final userId = userProvider.id;
     if (userId == null || userProvider.user == null) return;
@@ -460,15 +476,17 @@ class NotificationsHelper {
           ? '$dateText napon $subject tantárgyból'
           : 'on $dateText for $subject';
 
-      await _plugin.show(
-        absence.id.hashCode,
-        title,
-        userProvider.getUsers().length == 1
-            ? baseBody
-            : '(${userProvider.displayName ?? userProvider.name ?? ''}) $baseBody',
-        _details(settings, 'Absence notifications'),
-        payload: 'absences',
-      );
+      if (!dryRun) {
+        await _plugin.show(
+          absence.id.hashCode,
+          title,
+          userProvider.getUsers().length == 1
+              ? baseBody
+              : '(${userProvider.displayName ?? userProvider.name ?? ''}) $baseBody',
+          _details(settings, 'Absence notifications'),
+          payload: 'absences',
+        );
+      }
     }
 
     await database.userStore.storeLastSeen(
@@ -483,6 +501,7 @@ class NotificationsHelper {
     required SettingsProvider settings,
     required UserProvider userProvider,
     required KretaClient kreta,
+    required bool dryRun,
   }) async {
     final userId = userProvider.id;
     if (userId == null) return;
@@ -516,13 +535,15 @@ class NotificationsHelper {
           ? message.author
           : '(${userProvider.displayName ?? userProvider.name ?? ''}) ${message.author}';
 
-      await _plugin.show(
-        message.id,
-        title,
-        body,
-        _details(settings, 'Message notifications'),
-        payload: 'messages',
-      );
+      if (!dryRun) {
+        await _plugin.show(
+          message.id,
+          title,
+          body,
+          _details(settings, 'Message notifications'),
+          payload: 'messages',
+        );
+      }
     }
 
     await database.userStore.storeLastSeen(
@@ -537,6 +558,7 @@ class NotificationsHelper {
     required SettingsProvider settings,
     required UserProvider userProvider,
     required KretaClient kreta,
+    required bool dryRun,
   }) async {
     final userId = userProvider.id;
     if (userId == null) return;
@@ -635,13 +657,15 @@ class NotificationsHelper {
         body = '(${userProvider.displayName ?? userProvider.name ?? ''}) $body';
       }
 
-      await _plugin.show(
-        lesson.id.hashCode,
-        title,
-        body,
-        _details(settings, 'Timetable notifications'),
-        payload: 'timetable',
-      );
+      if (!dryRun) {
+        await _plugin.show(
+          lesson.id.hashCode,
+          title,
+          body,
+          _details(settings, 'Timetable notifications'),
+          payload: 'timetable',
+        );
+      }
 
       notifiedCount++;
       if (latestNotifiedLessonStart == null ||
@@ -649,7 +673,7 @@ class NotificationsHelper {
         latestNotifiedLessonStart = lesson.start;
       }
       _debugLog(
-        'Lesson notified user=$userId id=${lesson.id} start=${lesson.start.toIso8601String()} changed=${_lessonChangeFingerprint(lesson)}',
+        '${dryRun ? 'Lesson would notify' : 'Lesson notified'} user=$userId id=${lesson.id} start=${lesson.start.toIso8601String()} changed=${_lessonChangeFingerprint(lesson)}',
         settings: settings,
       );
     }
@@ -671,6 +695,7 @@ class NotificationsHelper {
     required SettingsProvider settings,
     required UserProvider userProvider,
     required KretaClient kreta,
+    required bool dryRun,
   }) async {
     final userId = userProvider.id;
     if (userId == null || userProvider.user == null) return;
@@ -704,13 +729,15 @@ class NotificationsHelper {
         body = '(${userProvider.displayName ?? userProvider.name ?? ''}) $body';
       }
 
-      await _plugin.show(
-        exam.id.hashCode,
-        title,
-        body,
-        _details(settings, 'Exam notifications'),
-        payload: 'timetable',
-      );
+      if (!dryRun) {
+        await _plugin.show(
+          exam.id.hashCode,
+          title,
+          body,
+          _details(settings, 'Exam notifications'),
+          payload: 'timetable',
+        );
+      }
     }
 
     await database.userStore.storeLastSeen(
