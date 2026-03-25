@@ -433,11 +433,13 @@ class NotificationsHelper {
       settings: settings,
     );
 
-    await database.userStore.storeLastSeen(
-      DateTime.now(),
-      userId: userId,
-      category: LastSeenCategory.grade,
-    );
+    if (!dryRun) {
+      await database.userStore.storeLastSeen(
+        DateTime.now(),
+        userId: userId,
+        category: LastSeenCategory.grade,
+      );
+    }
   }
 
   Future<void> _absenceNotifications({
@@ -489,11 +491,13 @@ class NotificationsHelper {
       }
     }
 
-    await database.userStore.storeLastSeen(
-      DateTime.now(),
-      userId: userId,
-      category: LastSeenCategory.absence,
-    );
+    if (!dryRun) {
+      await database.userStore.storeLastSeen(
+        DateTime.now(),
+        userId: userId,
+        category: LastSeenCategory.absence,
+      );
+    }
   }
 
   Future<void> _messageNotifications({
@@ -546,11 +550,13 @@ class NotificationsHelper {
       }
     }
 
-    await database.userStore.storeLastSeen(
-      DateTime.now(),
-      userId: userId,
-      category: LastSeenCategory.message,
-    );
+    if (!dryRun) {
+      await database.userStore.storeLastSeen(
+        DateTime.now(),
+        userId: userId,
+        category: LastSeenCategory.message,
+      );
+    }
   }
 
   Future<void> _lessonNotifications({
@@ -567,15 +573,12 @@ class NotificationsHelper {
     final currentWeek = Week.current();
     final nextWeek = currentWeek.next();
 
-    final previousLessonsByWeek =
-        await database.userQuery.getLessons(userId: userId);
-    final previousLessons = <Lesson>[
-      ...(previousLessonsByWeek[currentWeek] ?? const <Lesson>[]),
-      ...(previousLessonsByWeek[nextWeek] ?? const <Lesson>[]),
-    ];
-    final previousById = {
-      for (final lesson in previousLessons) lesson.id: lesson,
-    };
+    final watchData = await database.userQuery.getWatchData(userId: userId);
+    final rawLessonState = watchData['lesson_notification_state'];
+    final Map<String, String> lessonState = rawLessonState is Map
+        ? rawLessonState
+            .map((key, value) => MapEntry(key.toString(), value.toString()))
+        : <String, String>{};
 
     final timetableProvider = TimetableProvider(
       user: userProvider,
@@ -604,33 +607,86 @@ class NotificationsHelper {
     }
 
     _debugLog(
-      'Lesson check for user=$userId: primed=$primed, now=$now, lessons=${lessons.length}, prevLessons=${previousLessons.length}',
+      'Lesson check for user=$userId: primed=$primed, now=$now, lessons=${lessons.length}, state=${lessonState.length}',
       settings: settings,
     );
 
     var changedCount = 0;
-    var afterLastSeenCount = 0;
-    var newChangeCount = 0;
+    var eligibleCount = 0;
+    var unchangedStateCount = 0;
     var notifiedCount = 0;
-    DateTime? latestNotifiedLessonStart;
+    var restoredCount = 0;
+    final activeLessonIds = <String>{};
+    final DateTime earliestRelevant = now.subtract(const Duration(hours: 1));
+    final DateTime latestRelevant = now.add(const Duration(days: 7));
 
     for (final lesson in lessons) {
+      activeLessonIds.add(lesson.id);
+
       final isCanceled = lesson.status?.name == 'Elmaradt';
       final isChanged = _isLessonChanged(lesson);
       if (isChanged) changedCount++;
 
-      final previousLesson = previousById[lesson.id];
-      final wasChanged =
-          previousLesson != null && _isLessonChanged(previousLesson);
-      final isNewChange = !wasChanged ||
-          _lessonChangeFingerprint(previousLesson) !=
-              _lessonChangeFingerprint(lesson);
-      final isAfterLastSeen = lesson.start.isAfter(primed);
+      final isRelevant = lesson.end.isAfter(earliestRelevant) &&
+          lesson.start.isBefore(latestRelevant);
 
-      if (isAfterLastSeen) afterLastSeenCount++;
-      if (isChanged && isNewChange) newChangeCount++;
+      if (!isChanged) {
+        if (lessonState.containsKey(lesson.id)) {
+          restoredCount++;
 
-      if (!isChanged || !isAfterLastSeen) continue;
+          if (isRelevant) {
+            final title = settings.language == 'hu'
+                ? 'Órarend szerkesztve'
+                : (settings.language == 'de'
+                    ? 'Fahrplan geändert'
+                    : 'Timetable modified');
+
+            final day = _dayName(lesson.date, settings.language);
+            final subject = lesson.name;
+
+            var body = settings.language == 'hu'
+                ? '$day: ${lesson.lessonIndex}. óra ($subject) mégis meg lesz tartva'
+                : (settings.language == 'de'
+                    ? 'Stunde #${lesson.lessonIndex} ($subject) am $day findet doch regulär statt'
+                    : 'Lesson #${lesson.lessonIndex} ($subject) on $day will be held as normal');
+
+            if (userProvider.getUsers().length > 1) {
+              body =
+                  '(${userProvider.displayName ?? userProvider.name ?? ''}) $body';
+            }
+
+            if (!dryRun) {
+              await _plugin.show(
+                lesson.id.hashCode,
+                title,
+                body,
+                _details(settings, 'Timetable notifications'),
+                payload: 'timetable',
+              );
+            }
+
+            notifiedCount++;
+            _debugLog(
+              '${dryRun ? 'Lesson would notify' : 'Lesson notified'} restored-normal user=$userId id=${lesson.id} start=${lesson.start.toIso8601String()}',
+              settings: settings,
+            );
+          }
+
+          lessonState.remove(lesson.id);
+        }
+
+        continue;
+      }
+
+      if (lesson.isEmpty || lesson.id.contains(',UresOra,')) continue;
+      if (!isRelevant) continue;
+      eligibleCount++;
+
+      final fingerprint = _lessonChangeFingerprint(lesson);
+      if (lessonState[lesson.id] == fingerprint) {
+        unchangedStateCount++;
+        continue;
+      }
 
       final title = settings.language == 'hu'
           ? 'Órarend szerkesztve'
@@ -665,29 +721,43 @@ class NotificationsHelper {
           _details(settings, 'Timetable notifications'),
           payload: 'timetable',
         );
+
+        lessonState[lesson.id] = fingerprint;
+      } else {
+        lessonState[lesson.id] = fingerprint;
       }
 
       notifiedCount++;
-      if (latestNotifiedLessonStart == null ||
-          lesson.start.isAfter(latestNotifiedLessonStart)) {
-        latestNotifiedLessonStart = lesson.start;
-      }
       _debugLog(
         '${dryRun ? 'Lesson would notify' : 'Lesson notified'} user=$userId id=${lesson.id} start=${lesson.start.toIso8601String()} changed=${_lessonChangeFingerprint(lesson)}',
         settings: settings,
       );
     }
 
+    final staleKeys = lessonState.keys
+        .where((key) => !activeLessonIds.contains(key))
+        .toList();
+    for (final key in staleKeys) {
+      lessonState.remove(key);
+    }
+
+    if (!dryRun) {
+      watchData['lesson_notification_state'] = lessonState;
+      await database.userStore.storeWatchData(watchData, userId: userId);
+    }
+
     _debugLog(
-      'Lesson summary user=$userId changed=$changedCount afterLastSeen=$afterLastSeenCount newChange=$newChangeCount notified=$notifiedCount',
+      'Lesson summary user=$userId changed=$changedCount eligible=$eligibleCount unchangedState=$unchangedStateCount restored=$restoredCount notified=$notifiedCount',
       settings: settings,
     );
 
-    await database.userStore.storeLastSeen(
-      latestNotifiedLessonStart ?? now,
-      userId: userId,
-      category: LastSeenCategory.lesson,
-    );
+    if (!dryRun) {
+      await database.userStore.storeLastSeen(
+        now,
+        userId: userId,
+        category: LastSeenCategory.lesson,
+      );
+    }
   }
 
   Future<void> _examNotifications({
@@ -740,11 +810,13 @@ class NotificationsHelper {
       }
     }
 
-    await database.userStore.storeLastSeen(
-      DateTime.now(),
-      userId: userId,
-      category: LastSeenCategory.exam,
-    );
+    if (!dryRun) {
+      await database.userStore.storeLastSeen(
+        DateTime.now(),
+        userId: userId,
+        category: LastSeenCategory.exam,
+      );
+    }
   }
 
   Future<void> setAllCategoriesSeen(UserProvider userProvider) async {

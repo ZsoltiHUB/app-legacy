@@ -242,6 +242,23 @@ class UserDatabaseQuery {
     return lastSeen;
   }
 
+  Future<Map<String, dynamic>> getWatchData({required String userId}) async {
+    List<Map> userData =
+        await db.query("user_data", where: "id = ?", whereArgs: [userId]);
+    if (userData.isEmpty) return {};
+    String? watchDataJson = userData.elementAt(0)["watch_data"] as String?;
+    if (watchDataJson == null || watchDataJson.isEmpty) return {};
+
+    try {
+      final decoded = jsonDecode(watchDataJson);
+      if (decoded is Map) {
+        return decoded.cast<String, dynamic>();
+      }
+    } catch (_) {}
+
+    return {};
+  }
+
   // renamed things
   Future<Map<String, String>> renamedSubjects({required String userId}) async {
     List<Map> userData =

@@ -158,6 +158,16 @@ class UserDatabaseStore {
         where: "id = ?", whereArgs: [userId]);
   }
 
+  Future<void> storeWatchData(Map<String, dynamic> watchData,
+      {required String userId}) async {
+    await db.update(
+      "user_data",
+      {"watch_data": jsonEncode(watchData)},
+      where: "id = ?",
+      whereArgs: [userId],
+    );
+  }
+
   // renamed things
   Future<void> storeRenamedSubjects(Map<String, String> subjects,
       {required String userId}) async {
