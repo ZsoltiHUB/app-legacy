@@ -224,52 +224,72 @@ class NotificationsHelper {
       _debugLog('Processing user=${user.id}', settings: settings);
 
       if (settings.notificationsGradesEnabled) {
-        await _gradeNotifications(
-          database: database,
+        await _runCategory(
+          'grades',
+          () => _gradeNotifications(
+            database: database,
+            settings: settings,
+            userProvider: userProviderForUser,
+            kreta: kreta,
+            dryRun: dryRun,
+          ),
           settings: settings,
-          userProvider: userProviderForUser,
-          kreta: kreta,
-          dryRun: dryRun,
         );
       }
 
       if (settings.notificationsAbsencesEnabled) {
-        await _absenceNotifications(
-          database: database,
+        await _runCategory(
+          'absences',
+          () => _absenceNotifications(
+            database: database,
+            settings: settings,
+            userProvider: userProviderForUser,
+            kreta: kreta,
+            dryRun: dryRun,
+          ),
           settings: settings,
-          userProvider: userProviderForUser,
-          kreta: kreta,
-          dryRun: dryRun,
         );
       }
 
       if (settings.notificationsMessagesEnabled) {
-        await _messageNotifications(
-          database: database,
+        await _runCategory(
+          'messages',
+          () => _messageNotifications(
+            database: database,
+            settings: settings,
+            userProvider: userProviderForUser,
+            kreta: kreta,
+            dryRun: dryRun,
+          ),
           settings: settings,
-          userProvider: userProviderForUser,
-          kreta: kreta,
-          dryRun: dryRun,
         );
       }
 
       if (settings.notificationsLessonsEnabled) {
-        await _lessonNotifications(
-          database: database,
+        await _runCategory(
+          'lessons',
+          () => _lessonNotifications(
+            database: database,
+            settings: settings,
+            userProvider: userProviderForUser,
+            kreta: kreta,
+            dryRun: dryRun,
+          ),
           settings: settings,
-          userProvider: userProviderForUser,
-          kreta: kreta,
-          dryRun: dryRun,
         );
       }
 
       if (_bitEnabled(settings, 7)) {
-        await _examNotifications(
-          database: database,
+        await _runCategory(
+          'exams',
+          () => _examNotifications(
+            database: database,
+            settings: settings,
+            userProvider: userProviderForUser,
+            kreta: kreta,
+            dryRun: dryRun,
+          ),
           settings: settings,
-          userProvider: userProviderForUser,
-          kreta: kreta,
-          dryRun: dryRun,
         );
       }
     }
@@ -329,6 +349,29 @@ class NotificationsHelper {
     return 'substitute:$substituteName';
   }
 
+  String _gradeFingerprint(Grade grade) {
+    return [
+      grade.id,
+      grade.subject.id,
+      grade.value.value.toString(),
+      grade.value.valueName,
+      grade.writeDate.millisecondsSinceEpoch.toString(),
+      grade.seenDate.millisecondsSinceEpoch.toString(),
+    ].join('|');
+  }
+
+  Future<void> _runCategory(
+    String name,
+    Future<void> Function() action, {
+    required SettingsProvider settings,
+  }) async {
+    try {
+      await action();
+    } catch (e) {
+      _debugLog('Category failed: $name error=$e', settings: settings);
+    }
+  }
+
   Future<DateTime?> _lastSeenOrPrime({
     required DatabaseProvider database,
     required String userId,
@@ -361,24 +404,46 @@ class NotificationsHelper {
     final gradesJson = await kreta.getAPI(KretaAPI.grades(iss));
     if (gradesJson is! List) return;
 
+    final grades = gradesJson.map((e) => Grade.fromJson(e)).toList();
+
     final primed = await _lastSeenOrPrime(
       database: database,
       userId: userId,
       category: LastSeenCategory.grade,
     );
+
+    final watchData = await database.userQuery.getWatchData(userId: userId);
+    final rawGradeState = watchData['grade_notification_state'];
+    final Map<String, String> gradeState = rawGradeState is Map
+        ? rawGradeState
+            .map((key, value) => MapEntry(key.toString(), value.toString()))
+        : <String, String>{};
+
     if (primed == null) {
+      for (final grade in grades) {
+        final hasDisplayValue =
+            grade.value.value > 0 || grade.value.valueName.trim().isNotEmpty;
+        if (!hasDisplayValue) continue;
+        gradeState[grade.id] = _gradeFingerprint(grade);
+      }
+
+      if (!dryRun) {
+        watchData['grade_notification_state'] = gradeState;
+        await database.userStore.storeWatchData(watchData, userId: userId);
+      }
+
       _debugLog(
-        'Grade notifications primed last-seen for user=$userId; skipping this cycle to avoid historical spam.',
+        'Grade notifications primed and seeded state for user=$userId; seeded=${gradeState.length}',
         settings: settings,
       );
       return;
     }
 
-    final grades = gradesJson.map((e) => Grade.fromJson(e)).toList();
-
     var numericOrTextCount = 0;
-    var afterLastSeenCount = 0;
+    var seedSkipCount = 0;
+    var unchangedStateCount = 0;
     var notifiedCount = 0;
+    final bool seedMode = gradeState.isEmpty;
 
     for (final grade in grades) {
       final hasDisplayValue =
@@ -389,9 +454,18 @@ class NotificationsHelper {
       final announcedAt = [grade.date, grade.writeDate, grade.seenDate].reduce(
         (a, b) => a.isAfter(b) ? a : b,
       );
-      final isAfterLastSeen = announcedAt.isAfter(primed);
-      if (!isAfterLastSeen) continue;
-      afterLastSeenCount++;
+      final fingerprint = _gradeFingerprint(grade);
+
+      if (seedMode && !announcedAt.isAfter(primed)) {
+        gradeState[grade.id] = fingerprint;
+        seedSkipCount++;
+        continue;
+      }
+
+      if (!seedMode && gradeState[grade.id] == fingerprint) {
+        unchangedStateCount++;
+        continue;
+      }
 
       final title = settings.language == 'hu'
           ? 'Új jegy'
@@ -421,6 +495,7 @@ class NotificationsHelper {
         );
       }
 
+      gradeState[grade.id] = fingerprint;
       notifiedCount++;
       _debugLog(
         '${dryRun ? 'Grade would notify' : 'Grade notified'} user=$userId id=${grade.id} announcedAt=${announcedAt.toIso8601String()} type=${grade.type.name}',
@@ -428,18 +503,20 @@ class NotificationsHelper {
       );
     }
 
-    _debugLog(
-      'Grade summary user=$userId total=${grades.length} valued=$numericOrTextCount afterLastSeen=$afterLastSeenCount notified=$notifiedCount primed=$primed',
-      settings: settings,
-    );
-
     if (!dryRun) {
+      watchData['grade_notification_state'] = gradeState;
+      await database.userStore.storeWatchData(watchData, userId: userId);
       await database.userStore.storeLastSeen(
         DateTime.now(),
         userId: userId,
         category: LastSeenCategory.grade,
       );
     }
+
+    _debugLog(
+      'Grade summary user=$userId total=${grades.length} valued=$numericOrTextCount seedMode=$seedMode seedSkipped=$seedSkipCount unchangedState=$unchangedStateCount notified=$notifiedCount primed=$primed',
+      settings: settings,
+    );
   }
 
   Future<void> _absenceNotifications({
